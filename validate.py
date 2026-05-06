@@ -183,8 +183,8 @@ def print_summary(results: dict) -> None:
     print("-" * 60)
 
     rows = [
-        ("1. Baseline (ImageNet head)", results["val_accuracy_top1_imagenet_head"]),
-        ("2. Initialized head (no FT)", results["val_accuracy_top1_init_head"]),
+        # ("1. Baseline (ImageNet head)", results["val_accuracy_top1_imagenet_head"]),
+        # ("2. Initialized head (no FT)", results["val_accuracy_top1_init_head"]),
         ("3. Fine-tuned (ZO)",          results["val_accuracy_top1_finetuned"]),
     ]
     for label, top1 in rows:
@@ -315,19 +315,19 @@ if __name__ == "__main__":
     # ------------------------------------------------------------------
     # Checkpoint 1: Baseline — ImageNet head
     # ------------------------------------------------------------------
-    print("\n[Checkpoint 1/3] Baseline (ImageNet head)")
-    model_imagenet = get_model_imagenet_head()
-    top1_imagenet = evaluate(model_imagenet, val_loader, device, desc="Baseline eval")
-    print(f"  Top-1: {_fmt(top1_imagenet)}")
-    del model_imagenet
+    # print("\n[Checkpoint 1/3] Baseline (ImageNet head)")
+    # model_imagenet = get_model_imagenet_head()
+    # top1_imagenet = evaluate(model_imagenet, val_loader, device, desc="Baseline eval")
+    # print(f"  Top-1: {_fmt(top1_imagenet)}")
+    # del model_imagenet
 
     # ------------------------------------------------------------------
     # Checkpoint 2: Initialized head — no fine-tuning
     # ------------------------------------------------------------------
-    print("\n[Checkpoint 2/3] Initialized head (no fine-tuning)")
+    #print("\n[Checkpoint 2/3] Initialized head (no fine-tuning)")
     model = get_model()
-    top1_init = evaluate(model, val_loader, device, desc="Init-head eval")
-    print(f"  Top-1: {_fmt(top1_init)}")
+    # top1_init = evaluate(model, val_loader, device, desc="Init-head eval")
+    # print(f"  Top-1: {_fmt(top1_init)}")
 
     # ------------------------------------------------------------------
     # Checkpoint 3: Fine-tuned
@@ -353,8 +353,8 @@ if __name__ == "__main__":
     # Save results
     # ------------------------------------------------------------------
     results = {
-        "val_accuracy_top1_imagenet_head": top1_imagenet,
-        "val_accuracy_top1_init_head": top1_init,
+        # "val_accuracy_top1_imagenet_head": top1_imagenet,
+        # "val_accuracy_top1_init_head": top1_init,
         "val_accuracy_top1_finetuned": top1_ft,
         "n_batches": args.n_batches,
         "batch_size": args.batch_size,
