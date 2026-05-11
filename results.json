@@ -1,0 +1,10 @@
+{
+  "val_accuracy_top1_finetuned": 0.043,
+  "n_batches": 32,
+  "batch_size": 256,
+  "layers_tuned": [
+    "fc.weight",
+    "fc.bias"
+  ],
+  "total_samples": 10000
+}

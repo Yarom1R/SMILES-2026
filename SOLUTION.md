@@ -18,7 +18,7 @@ To reproduce the results and generate the `results.json` file, follow these step
 ---
 
 ## 2. Final Solution: Stability Strategy
-
+**Final Metric Achieved: 4.3% Accuracy**  
 My final approach is built upon three core pillars: **search space reduction**, **precise initialization**, and **adaptive step sizing**.
 
 ### Key Modifications:
