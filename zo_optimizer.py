@@ -7,16 +7,19 @@ import torch.nn as nn
 
 
 class ZeroOrderOptimizer:
-    def __init__(
-        self,
+    def __init__(self,
         model: nn.Module,
-        lr: float = 0.05,
-        eps: float = 0.5,
-        perturbation_mode: str = "gaussian",
-        lora_rank: int = 8,
-        lora_alpha: float = 8.0,
-        n_spsa: int = 100,
+        lr: float = 0.05, # learning rate
+        eps: float = 0.5, # perturbation value
+        perturbation_mode: str = "gaussian", # perturbation mode
+        lora_rank: int = 8, # LoRA rank
+        lora_alpha: float = 8.0, # LoRA alpha
+        n_spsa: int = 100, # Number of SPSA forward passes per batch
     ) -> None:
+        """
+        Initializes the Zero-Order optimizer with SPSA gradient estimation 
+         and LoRA (Low-Rank Adaptation) for parameter efficiency.
+        """
         self.model = model
         self.lr = lr
         self.eps = eps
@@ -46,6 +49,11 @@ class ZeroOrderOptimizer:
         self._setup()
 
     def _setup(self) -> None:
+        """
+        Identifies target layers and initializes LoRA matrices (A, B) for weights 
+        or prepares direct optimization for biases and other low-dim parameters.
+        """
+
         named = dict(self.model.named_parameters())
         for name in self.layer_names:
             if name not in named:
@@ -63,7 +71,7 @@ class ZeroOrderOptimizer:
                 self._lora[name] = {
                     "W0":    param.data.reshape(out_dim, in_dim).clone(),
                     "B":     B,   # fixed
-                    "A":     A,   # optimised
+                    "A":     A,   # optimising
                     "shape": param.shape,
                     "out":   out_dim,
                     "in":    in_dim,
@@ -77,6 +85,11 @@ class ZeroOrderOptimizer:
                 self._v[name] = torch.zeros_like(param)
 
     def _effective(self, name: str) -> torch.Tensor:
+        """
+        Computes the effective weight matrix by combining the frozen base weight 
+        with the trained low-rank adapter matrices.
+        """
+
         ls = self._lora[name]
         dev = ls["B"].device
         if ls["W0"].device != dev:
@@ -84,6 +97,11 @@ class ZeroOrderOptimizer:
         return (ls["W0"] + self.lora_scale * ls["B"] @ ls["A"]).reshape(ls["shape"])
 
     def _apply_all(self, params: dict) -> None:
+        """
+        Syncs the current state of LoRA adapters and direct parameters back 
+        into the original model's parameter data tensors.
+        """
+
         for name in self._lora:
             if name in params:
                 ls = self._lora[name]
@@ -95,6 +113,11 @@ class ZeroOrderOptimizer:
                 params[name].data.copy_(self._effective(name))
 
     def _sample(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Generates a random perturbation tensor (noise) using either 
+        Gaussian or Uniform distribution to probe the loss landscape.
+        """
+
         if self.perturbation_mode == "gaussian":
             return torch.randn_like(t)
         return torch.rand_like(t) * 2.0 - 1.0
@@ -102,6 +125,11 @@ class ZeroOrderOptimizer:
     def _estimate_grad(
         self, loss_fn: Callable[[], float], params: dict
     ) -> dict[str, torch.Tensor]:
+        """
+        Estimates gradients via SPSA by sampling perturbations and 
+        measuring the change in loss over multiple forward passes.
+        """
+
         acc: dict[str, torch.Tensor] = {}
         for name in self._lora:
             acc[f"{name}_A"] = torch.zeros_like(self._lora[name]["A"])
@@ -116,7 +144,7 @@ class ZeroOrderOptimizer:
                 for name in self._direct:
                     dirs[name] = self._sample(self._direct[name])
 
-                # +ε
+                # f(x + eps * u)
                 for name, ls in self._lora.items():
                     ls["A"].add_(self.eps * dirs[f"{name}_A"])
                     params[name].data.copy_(self._effective(name))
@@ -124,7 +152,7 @@ class ZeroOrderOptimizer:
                     p.data.add_(self.eps * dirs[name])
                 f_plus = loss_fn()
 
-                # −ε
+                # f(x - eps * u)  — restore then subtract
                 for name, ls in self._lora.items():
                     ls["A"].sub_(2.0 * self.eps * dirs[f"{name}_A"])
                     params[name].data.copy_(self._effective(name))
@@ -132,13 +160,14 @@ class ZeroOrderOptimizer:
                     p.data.sub_(2.0 * self.eps * dirs[name])
                 f_minus = loss_fn()
 
-                # Restore
+                # Restore original value
                 for name, ls in self._lora.items():
                     ls["A"].add_(self.eps * dirs[f"{name}_A"])
                     params[name].data.copy_(self._effective(name))
                 for name, p in self._direct.items():
                     p.data.add_(self.eps * dirs[name])
 
+                # Calculate the direction
                 coeff = (f_plus - f_minus) / (2.0 * self.eps)
                 for key, u in dirs.items():
                     acc[key].add_(coeff * u)
@@ -146,6 +175,10 @@ class ZeroOrderOptimizer:
         return {k: v / self.n_spsa for k, v in acc.items()}
 
     def _adam_step(self, key: str, grad: torch.Tensor) -> torch.Tensor:
+        """
+        Calculates the Adam update step for a specific parameter using 
+        running estimates of first and second moments.
+        """
         b1, b2, eps_a = 0.9, 0.999, 1e-8
         t = self.step_count
         if self._m[key].device != grad.device:
@@ -158,6 +191,10 @@ class ZeroOrderOptimizer:
         return self.lr * m_hat / (v_hat.sqrt() + eps_a)
 
     def _update_params(self, params: dict, grads: dict) -> None:
+        """
+        Updates the optimized parameters (LoRA 'A' matrices and direct parameters) 
+        using the computed gradients and the Adam update rule.
+        """
         with torch.no_grad():
             for name, ls in self._lora.items():
                 key = f"{name}_A"
@@ -168,15 +205,11 @@ class ZeroOrderOptimizer:
                 if name in grads:
                     p.data.sub_(self._adam_step(name, grads[name]))
 
-    def _active_params(self) -> dict[str, nn.Parameter]:
-        named = dict(self.model.named_parameters())
-        missing = [n for n in self.layer_names if n not in named]
-        if missing:
-            raise KeyError(f"Layer names not found in model: {missing}")
-        return {n: named[n] for n in self.layer_names}
-
     def step(self, loss_fn: Callable[[], float]) -> float:
-        """One ZO step.  Forward passes per call: 1 + 2*n_spsa."""
+        """
+        Performs a single optimization step: applies current parameters, 
+        estimates gradients via loss function calls, and updates parameters.
+        """
         self.step_count += 1
         params = self._active_params()
         self._apply_all(params)

@@ -60,6 +60,11 @@ My ZO-optimizer was failing to converge. To understand why, I took a detour and 
 ### Full LoRA (Trainable A and B)
 Attempting to train both LoRA matrices simultaneously resulted in a "mathematical bottleneck." Since both updates are small ($\approx \epsilon$), the resulting weight change was proportional to $\epsilon^2$. This signal was too weak for the ZO-optimizer to distinguish from random noise. Switching to **Fixed-B** (ensuring an $O(\epsilon)$ response) was the turning point for the project.
 
+### Integration of Black-Box Optimization Libraries (Nevergrad)
+I explored using the `nevergrad` library, specifically testing meta-optimizers like `NGOpt` and population-based methods like `TBPSA` (Test-Based Population Size Adaptation).
+*   **Result:** The best accuracy achieved was only **~2.0%**.
+*   **Why it failed:** While `nevergrad` is powerful for general-purpose black-box optimization, these algorithms are often designed for lower-dimensional problems or different types of objective landscapes. In the specific context of high-dimensional neural network weights, my custom SPSA-Adam setup provided a more "gradient-aware" update that better captured the geometry of the loss function.
+
 ---
 **Conclusion:** I believe the most significant achievement of this project is not the final accuracy, but the **consistent and gradual convergence of the loss function**. By stabilizing the initialization and reducing the parameter space through LoRA, I transformed a chaotic search into an optimization process. This stability suggests that the solution is highly scalable: with a larger data budget and more iterations, the model is well-positioned to continue learning and reach even higher performance levels.
 
