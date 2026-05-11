@@ -204,6 +204,29 @@ class ZeroOrderOptimizer:
             for name, p in self._direct.items():
                 if name in grads:
                     p.data.sub_(self._adam_step(name, grads[name]))
+    
+    def _active_params(self) -> dict[str, nn.Parameter]:
+        """Return a mapping from name → parameter for all active layer names.
+
+        Only parameters whose names appear in ``self.layer_names`` are
+        returned. Parameters not in this mapping are never modified.
+
+        Returns:
+            Dict mapping parameter name to its ``nn.Parameter`` tensor.
+
+        Raises:
+            KeyError: If a name in ``self.layer_names`` does not exist in the
+                      model.
+        """
+        named = dict(self.model.named_parameters())
+        missing = [n for n in self.layer_names if n not in named]
+        if missing:
+            raise KeyError(
+                f"The following layer names were not found in the model: "
+                f"{missing}. Use [n for n, _ in model.named_parameters()] "
+                f"to inspect valid names."
+            )
+        return {n: named[n] for n in self.layer_names}
 
     def step(self, loss_fn: Callable[[], float]) -> float:
         """
