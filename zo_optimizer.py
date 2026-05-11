@@ -1,19 +1,3 @@
-"""
-zo_optimizer_lora.py — Zero-order optimizer: fixed-B LoRA + SPSA + Adam.
-
-Key fix vs naive LoRA+ZO
--------------------------
-Standard LoRA initialises B=0, A~N(0,σ²).  When both A and B are perturbed
-simultaneously, the change in effective weight is O(ε²) → near-zero gradient
-signal.
-
-Fix: initialise B ~ N(0,σ²) (fixed forever), A = 0, perturb only A.  Then:
-    ΔW = scale * B @ (ε·u_A)  →  O(ε)  ✓
-
-B spans a fixed random low-rank subspace; SPSA finds the best projection of
-the gradient onto that subspace.
-"""
-
 from __future__ import annotations
 
 from typing import Callable
@@ -23,19 +7,6 @@ import torch.nn as nn
 
 
 class ZeroOrderOptimizer:
-    """Gradient-free optimiser: fixed-B LoRA + SPSA + Adam.
-
-    Args
-    ----
-    model             : nn.Module to optimise.
-    lr                : Adam learning rate.
-    eps               : SPSA perturbation magnitude.
-    perturbation_mode : ``"gaussian"`` or ``"uniform"``.
-    lora_rank         : Rank of the LoRA decomposition for weight matrices.
-    lora_alpha        : LoRA scale = alpha / rank.
-    n_spsa            : Number of SPSA realisations averaged per step.
-    """
-
     def __init__(
         self,
         model: nn.Module,
@@ -61,29 +32,18 @@ class ZeroOrderOptimizer:
             )
         self.perturbation_mode = perturbation_mode
 
-        # ------------------------------------------------------------------
-        # LAYER SELECTION — only the classification head.
-        # ------------------------------------------------------------------
         self.layer_names: list[str] = [
             "fc.weight",
             "fc.bias",
         ]
-        # ------------------------------------------------------------------
 
-        # LoRA state for weight matrices: {name: {"W0", "B", "A", ...}}
         self._lora: dict[str, dict] = {}
-        # Direct ZO state for bias/1-D tensors
         self._direct: dict[str, nn.Parameter] = {}
 
-        # Adam moments
         self._m: dict[str, torch.Tensor] = {}
         self._v: dict[str, torch.Tensor] = {}
 
         self._setup()
-
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def _setup(self) -> None:
         named = dict(self.model.named_parameters())
@@ -97,7 +57,6 @@ class ZeroOrderOptimizer:
                 in_dim  = param.numel() // out_dim
                 r = min(self.lora_rank, out_dim, in_dim)
 
-                # Fixed random B (non-zero), zero A → ΔW = scale*B@A = 0 at init
                 B = torch.randn(out_dim, r, device=param.device, dtype=param.dtype) * 0.02
                 A = torch.zeros(r, in_dim, device=param.device, dtype=param.dtype)
 
@@ -135,18 +94,10 @@ class ZeroOrderOptimizer:
                     ls["W0"] = ls["W0"].to(dev)
                 params[name].data.copy_(self._effective(name))
 
-    # ------------------------------------------------------------------
-    # Sampling
-    # ------------------------------------------------------------------
-
     def _sample(self, t: torch.Tensor) -> torch.Tensor:
         if self.perturbation_mode == "gaussian":
             return torch.randn_like(t)
         return torch.rand_like(t) * 2.0 - 1.0
-
-    # ------------------------------------------------------------------
-    # SPSA gradient estimation (perturb A only, B is fixed)
-    # ------------------------------------------------------------------
 
     def _estimate_grad(
         self, loss_fn: Callable[[], float], params: dict
@@ -194,10 +145,6 @@ class ZeroOrderOptimizer:
 
         return {k: v / self.n_spsa for k, v in acc.items()}
 
-    # ------------------------------------------------------------------
-    # Adam update
-    # ------------------------------------------------------------------
-
     def _adam_step(self, key: str, grad: torch.Tensor) -> torch.Tensor:
         b1, b2, eps_a = 0.9, 0.999, 1e-8
         t = self.step_count
@@ -220,10 +167,6 @@ class ZeroOrderOptimizer:
             for name, p in self._direct.items():
                 if name in grads:
                     p.data.sub_(self._adam_step(name, grads[name]))
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def _active_params(self) -> dict[str, nn.Parameter]:
         named = dict(self.model.named_parameters())
