@@ -27,6 +27,9 @@ class ZeroOrderOptimizer:
         self.lora_rank = lora_rank
         self.lora_scale = lora_alpha / lora_rank
         self.step_count = 0
+        
+        self._flat: dict[str, nn.Parameter] = {}
+        self._lora: dict[str, dict] = {}
 
         if perturbation_mode not in ("gaussian", "uniform"):
             raise ValueError(
@@ -40,15 +43,12 @@ class ZeroOrderOptimizer:
             "fc.bias",
         ]
 
-        self._lora: dict[str, dict] = {}
-        self._direct: dict[str, nn.Parameter] = {}
-
-        self._m: dict[str, torch.Tensor] = {}
         self._v: dict[str, torch.Tensor] = {}
+        self._m: dict[str, torch.Tensor] = {}
 
-        self._setup()
+        self._set()
 
-    def _setup(self) -> None:
+    def _set(self) -> None:
         """
         Identifies target layers and initializes LoRA matrices (A, B) for weights 
         or prepares direct optimization for biases and other low-dim parameters.
@@ -58,31 +58,31 @@ class ZeroOrderOptimizer:
         for name in self.layer_names:
             if name not in named:
                 continue
-            param = named[name]
+            p = named[name]
 
-            if param.dim() >= 2:
-                out_dim = param.shape[0]
-                in_dim  = param.numel() // out_dim
+            if p.dim() >= 2:
+                out_dim = p.shape[0]
+                in_dim  = p.numel() // out_dim
                 r = min(self.lora_rank, out_dim, in_dim)
 
-                B = torch.randn(out_dim, r, device=param.device, dtype=param.dtype) * 0.02
-                A = torch.zeros(r, in_dim, device=param.device, dtype=param.dtype)
+                A = torch.zeros(r, in_dim, device=p.device, dtype=p.dtype)
+                B = torch.randn(out_dim, r, device=p.device, dtype=p.dtype) * 0.02
 
                 self._lora[name] = {
-                    "W0":    param.data.reshape(out_dim, in_dim).clone(),
+                    "W0":    p.data.reshape(out_dim, in_dim).clone(),
                     "B":     B,   # fixed
                     "A":     A,   # optimising
-                    "shape": param.shape,
+                    "shape": p.shape,
                     "out":   out_dim,
                     "in":    in_dim,
                 }
                 self._m[f"{name}_A"] = torch.zeros_like(A)
                 self._v[f"{name}_A"] = torch.zeros_like(A)
-                param.data.copy_(self._effective(name))
+                p.data.copy_(self._effective(name))
             else:
-                self._direct[name] = param
-                self._m[name] = torch.zeros_like(param)
-                self._v[name] = torch.zeros_like(param)
+                self._flat[name] = p
+                self._m[name] = torch.zeros_like(p)
+                self._v[name] = torch.zeros_like(p)
 
     def _effective(self, name: str) -> torch.Tensor:
         """
@@ -90,11 +90,11 @@ class ZeroOrderOptimizer:
         with the trained low-rank adapter matrices.
         """
 
-        ls = self._lora[name]
-        dev = ls["B"].device
-        if ls["W0"].device != dev:
-            ls["W0"] = ls["W0"].to(dev)
-        return (ls["W0"] + self.lora_scale * ls["B"] @ ls["A"]).reshape(ls["shape"])
+        lrm = self._lora[name]
+        dev = lrm["B"].device
+        if lrm["W0"].device != dev:
+            lrm["W0"] = lrm["W0"].to(dev)
+        return (lrm["W0"] + self.lora_scale * lrm["B"] @ lrm["A"]).reshape(lrm["shape"])
 
     def _apply_all(self, params: dict) -> None:
         """
@@ -104,12 +104,12 @@ class ZeroOrderOptimizer:
 
         for name in self._lora:
             if name in params:
-                ls = self._lora[name]
+                lrm = self._lora[name]
                 dev = params[name].device
-                if ls["B"].device != dev:
-                    ls["B"]  = ls["B"].to(dev)
-                    ls["A"]  = ls["A"].to(dev)
-                    ls["W0"] = ls["W0"].to(dev)
+                if lrm["B"].device != dev:
+                    lrm["B"]  = lrm["B"].to(dev)
+                    lrm["A"]  = lrm["A"].to(dev)
+                    lrm["W0"] = lrm["W0"].to(dev)
                 params[name].data.copy_(self._effective(name))
 
     def _sample(self, t: torch.Tensor) -> torch.Tensor:
@@ -130,49 +130,49 @@ class ZeroOrderOptimizer:
         measuring the change in loss over multiple forward passes.
         """
 
-        acc: dict[str, torch.Tensor] = {}
+        accuracy: dict[str, torch.Tensor] = {}
         for name in self._lora:
-            acc[f"{name}_A"] = torch.zeros_like(self._lora[name]["A"])
-        for name in self._direct:
-            acc[name] = torch.zeros_like(self._direct[name])
+            accuracy[f"{name}_A"] = torch.zeros_like(self._lora[name]["A"])
+        for name in self._flat:
+            accuracy[name] = torch.zeros_like(self._flat[name])
 
         with torch.no_grad():
             for _ in range(self.n_spsa):
-                dirs: dict[str, torch.Tensor] = {}
+                directions: dict[str, torch.Tensor] = {}
                 for name in self._lora:
-                    dirs[f"{name}_A"] = self._sample(self._lora[name]["A"])
-                for name in self._direct:
-                    dirs[name] = self._sample(self._direct[name])
+                    directions[f"{name}_A"] = self._sample(self._lora[name]["A"])
+                for name in self._flat:
+                    directions[name] = self._sample(self._flat[name])
 
                 # f(x + eps * u)
-                for name, ls in self._lora.items():
-                    ls["A"].add_(self.eps * dirs[f"{name}_A"])
+                for name, lrm in self._lora.items():
+                    lrm["A"].add_(self.eps * directions[f"{name}_A"])
                     params[name].data.copy_(self._effective(name))
-                for name, p in self._direct.items():
-                    p.data.add_(self.eps * dirs[name])
+                for name, p in self._flat.items():
+                    p.data.add_(self.eps * directions[name])
                 f_plus = loss_fn()
 
                 # f(x - eps * u)  — restore then subtract
-                for name, ls in self._lora.items():
-                    ls["A"].sub_(2.0 * self.eps * dirs[f"{name}_A"])
+                for name, lrm in self._lora.items():
+                    lrm["A"].sub_(2.0 * self.eps * directions[f"{name}_A"])
                     params[name].data.copy_(self._effective(name))
-                for name, p in self._direct.items():
-                    p.data.sub_(2.0 * self.eps * dirs[name])
+                for name, p in self._flat.items():
+                    p.data.sub_(2.0 * self.eps * directions[name])
                 f_minus = loss_fn()
 
                 # Restore original value
-                for name, ls in self._lora.items():
-                    ls["A"].add_(self.eps * dirs[f"{name}_A"])
+                for name, lrm in self._lora.items():
+                    lrm["A"].add_(self.eps * directions[f"{name}_A"])
                     params[name].data.copy_(self._effective(name))
-                for name, p in self._direct.items():
-                    p.data.add_(self.eps * dirs[name])
+                for name, p in self._flat.items():
+                    p.data.add_(self.eps * directions[name])
 
                 # Calculate the direction
                 coeff = (f_plus - f_minus) / (2.0 * self.eps)
-                for key, u in dirs.items():
-                    acc[key].add_(coeff * u)
+                for key, u in directions.items():
+                    accuracy[key].add_(coeff * u)
 
-        return {k: v / self.n_spsa for k, v in acc.items()}
+        return {k: v / self.n_spsa for k, v in accuracy.items()}
 
     def _adam_step(self, key: str, grad: torch.Tensor) -> torch.Tensor:
         """
@@ -196,12 +196,12 @@ class ZeroOrderOptimizer:
         using the computed gradients and the Adam update rule.
         """
         with torch.no_grad():
-            for name, ls in self._lora.items():
+            for name, lrm in self._lora.items():
                 key = f"{name}_A"
                 if key in grads:
-                    ls["A"].sub_(self._adam_step(key, grads[key]))
+                    lrm["A"].sub_(self._adam_step(key, grads[key]))
                     params[name].data.copy_(self._effective(name))
-            for name, p in self._direct.items():
+            for name, p in self._flat.items():
                 if name in grads:
                     p.data.sub_(self._adam_step(name, grads[name]))
     
