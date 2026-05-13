@@ -15,15 +15,22 @@ To reproduce the results and generate the `results.json` file, follow these step
     ```
     *The script will automatically execute the optimization cycle and save the final metrics to `results.json`.*
 
+### The Reproducibility Challenge: RNG State Dependency
+> In the process of development, a significant performance gap was observed between the experimental script (with baseline checkpoints skipped, you can look at it in `validate_my.py`) and the official `validate.py`. 
+>
+> **Reason:** Skipping Checkpoints 1 & 2 prevents the random generator from advancing through the sequence of calls used during validation. Since the custom `train_data.py` uses stratified sampling based on the same RNG state, the specific subset of 8192 images selected for training changes. 
+> 
+> **Impact:** The model showed high sensitivity to the training subset. A "lucky" seed sequence led to 4.3% accuracy, while the official sequence yielded 2.25%. This highlights the high variance inherent in zeroth-order optimization on extremely small data budgets. The final results reported are based strictly on the **official** execution flow to ensure fairness and reproducibility.
+
 ---
 
 ## 2. Final Solution: Stability Strategy
-**Final Metric Achieved: 4.3% Accuracy**  
+**Final Metric Achieved: 2.25% Accuracy**  
 My final approach is built upon three core pillars: **search space reduction**, **precise initialization**, and **adaptive step sizing**.
 
 ### Key Modifications:
 1.  **Architecture (Fixed-B LoRA):** I replaced the standard fully connected layer with a LoRA-based structure where matrix $B$ is a fixed random projector, and only matrix $A$ is trainable. This reduced the number of parameters by a factor of 25 (down to ~2000), allowing the ZO-optimizer to identify a clear signal amidst the noise.
-2.  **Initialization (The "Cold Start" Trick):** 
+2.  **Initialization:** 
     Instead of standard PyTorch initialization, I implemented a scaled Xavier approach:
     ```python
     nn.init.xavier_uniform_(layer.weight)
