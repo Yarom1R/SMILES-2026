@@ -20,12 +20,12 @@ To reproduce the results and generate the `results.json` file, follow these step
 >
 > **Reason:** Skipping Checkpoints 1 & 2 prevents the random generator from advancing through the sequence of calls used during validation. Since the custom `train_data.py` uses stratified sampling based on the same RNG state, the specific subset of 8192 images selected for training changes. 
 > 
-> **Impact:** The model showed high sensitivity to the training subset. A "lucky" seed sequence led to 4.3% accuracy, while the official sequence yielded 2.25%. This highlights the high variance inherent in zeroth-order optimization on extremely small data budgets. The final results reported are based strictly on the **official** execution flow to ensure fairness and reproducibility.
+> **Impact:** The model showed high sensitivity to the training subset. A "lucky" seed sequence led to 4.3% accuracy, while the official sequence yielded 3.63%. This highlights the high variance inherent in zeroth-order optimization on extremely small data budgets. The final results reported are based strictly on the **official** execution flow to ensure fairness and reproducibility.
 
 ---
 
 ## 2. Final Solution: Stability Strategy
-**Final Metric Achieved: 2.25% Accuracy**  
+**Final Metric Achieved: 3.63% Accuracy**  
 My final approach is built upon three core pillars: **search space reduction**, **precise initialization**, and **adaptive step sizing**.
 
 ### Key Modifications:

@@ -12,7 +12,7 @@ class ZeroOrderOptimizer:
         lr: float = 0.05, # learning rate
         eps: float = 0.5, # perturbation value
         perturbation_mode: str = "gaussian", # perturbation mode
-        lora_rank: int = 8, # LoRA rank
+        lora_rank: int = 16, # LoRA rank
         lora_alpha: float = 8.0, # LoRA alpha
         n_spsa: int = 100, # Number of SPSA forward passes per batch
     ) -> None:

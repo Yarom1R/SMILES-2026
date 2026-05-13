@@ -1,9 +1,9 @@
 {
   "val_accuracy_top1_imagenet_head": 0.0037,
   "val_accuracy_top1_init_head": 0.0122,
-  "val_accuracy_top1_finetuned": 0.0225,
-  "n_batches": 32,
-  "batch_size": 256,
+  "val_accuracy_top1_finetuned": 0.0363,
+  "n_batches": 64,
+  "batch_size": 128,
   "layers_tuned": [
     "fc.weight",
     "fc.bias"
